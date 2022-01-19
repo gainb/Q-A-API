@@ -77,18 +77,13 @@ let getA = (page, count, qid, callback, parent = false) => {
     return client.query(query, [qid, (page-1)*count, count])
     .then(res => {
       transres.results = res.rows;
-      Promise.all(res.rows.map(item => {
+      Promise.all(transres.results.map(item => {
         return new Promise((resolve, reject) => {
           getAP(item.answer_id, (err, outcome) => {
             if (err) {
               reject(err);
             } else {
-              transres.results.forEach(trans => {
-                if (trans.answer_id === item.answer_id) {
-                  trans.photos = outcome;
-                  resolve(outcome);
-                }
-              })
+              item.photos = outcome;
               resolve(outcome);
             }
           })
