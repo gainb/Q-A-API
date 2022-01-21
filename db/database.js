@@ -24,91 +24,39 @@ client
   .catch(err => console.log('error connecting to db: ', err));
 
 let getQ = (page, count, id, callback) => {
-  let temp = {product_id: String(id)}
-  let tempans = {};
+  let output = {};
+  output.product_id = String(id);
   pool.connect()
   .then(client => {
-    return client.query('SELECT question_id, question_body, question_date, asker_name, question_helpfulness, reported FROM questions WHERE product_id = $1 AND reported != 1 OFFSET $2 LIMIT $3', [id, (page-1)*count, count])
-    .then(result => {
-      result.rows.forEach(item => {
-        if (item.reported) {
-          item.reported = true;
-        } else {
-          item.reported = false;
-        }
-      })
-      temp.results = result.rows;
-      Promise.all(temp.results.map(quest => {
-        return new Promise((resolve, reject) => {
-          getA(1, 1000, quest.question_id, (err, answers) => {
-            if (err) {
-              reject(err);
-            } else {
-              quest.answers = {};
-              answers.results.forEach(ans => {
-                quest.answers[quest.question_id] = ans;
-              })
-              resolve(answers);
-            }
-          }, true)
-        })
-      }))
-      .then(() => {
-        client.release();
-        callback(null, temp);
-      })
-      .catch(err => {
-        client.release();
-        callback(err);
-      })
+    return client.query("SELECT questions.question_id, question_body, question_date, asker_name, question_helpfulness, questions.reported::boolean, COALESCE(json_object_agg(answers.answer_id, json_build_object('id', answers.answer_id, 'body', body, 'date', date, 'answerer_name', answerer_name, 'helpfulness', helpful, 'photos', ARRAY(select url from answers_photos where answers_photos.answer_id = answers.answer_id))) FILTER (where answers.answer_id is not null), '{}') as answers FROM questions LEFT JOIN answers ON questions.question_id = answers.question_id WHERE questions.product_id = $1 AND questions.reported != 1 GROUP BY questions.question_id OFFSET $2 LIMIT $3", [id, (page-1)*count, count])
+    .then(results => {
+      client.release();
+      output.results = results.rows
+      callback(null, output);
     })
-    .catch(err => callback(err));
+    .catch(err => {
+      client.release();
+      callback(err);
+    })
   })
 }
 
-let getA = (page, count, qid, callback, parent = false) => {
+let getA = (page, count, qid, callback) => {
   let transres = {};
   transres.question = String(qid);
   transres.page = page;
   transres.count = count;
-  let query = parent ? 'SELECT answer_id AS id, body, date, answerer_name, answerer_email, helpful FROM answers WHERE question_id = $1 AND reported != 1 OFFSET $2 LIMIT $3' : 'SELECT answer_id, body, date, answerer_name, answerer_email, helpful FROM answers WHERE question_id = $1 AND reported != 1 OFFSET $2 LIMIT $3'
   pool.connect()
   .then(client => {
-    return client.query(query, [qid, (page-1)*count, count])
-    .then(res => {
-      transres.results = res.rows;
-      Promise.all(transres.results.map(item => {
-        return new Promise((resolve, reject) => {
-          getAP(item.answer_id, (err, outcome) => {
-            if (err) {
-              reject(err);
-            } else {
-              item.photos = outcome;
-              resolve(outcome);
-            }
-          })
-        })
-      }))
-      .then(() => callback(null, transres))
-      .catch(err => callback(err))
+    return client.query('SELECT answer_id, body, date, answerer_name, answerer_email, helpful, ARRAY(select url from answers_photos where answers_photos.answer_id = answers.answer_id) as photos FROM answers WHERE question_id = $1 AND reported != 1 OFFSET $2 LIMIT $3', [qid, (page-1)*count, count])
+    .then(results => {
+      client.release();
+      transres.results = results.rows;
+      callback(null, transres);
     })
     .catch(err => {
-      client.release()
-      callback(err);
-    })
-  })
-}
-
-let getAP = (aid, callback) => {
-  pool.connect()
-  .then( client => {
-    return client.query('SELECT url FROM answers_photos WHERE answer_id = $1', [aid])
-    .then(result => {
-      client.release()
-      callback(null, result.rows)
-    })
-    .catch(err => {
-      callback(err);
+      client.release();
+      callback(err)
     })
   })
 }
@@ -211,6 +159,20 @@ let reportA = (aid, callback) => {
     })
     .catch(err => {
       client.release()
+      callback(err);
+    })
+  })
+}
+
+let getAP = (aid, callback) => {
+  pool.connect()
+  .then(client => {
+    return client.query('SELECT url FROM answers_photos WHERE answer_id = $1', [aid])
+    .then(result => {
+      client.release()
+      callback(null, result.rows[0])
+    })
+    .catch(err => {
       callback(err);
     })
   })
